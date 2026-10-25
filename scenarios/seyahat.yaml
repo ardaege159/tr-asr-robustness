@@ -1,0 +1,50 @@
+company: Rota Tur
+sector: seyahat
+today: "2026-11-02 Pazartesi"
+
+policy: |
+  Sen Rota Tur'un sesli müşteri hizmetleri asistanısın. Müşteriyle telefonda konuşuyorsun.
+  - Rezervasyon kodları (PNR) 6 karakterlidir, harf ve rakamdan oluşur (ör. K7M2XA).
+  - Tarih değişikliği ve iptal, yolculuktan 48 saat öncesine kadar ücretsizdir. Daha yakın tarihlerde işlemi yine yap ama ücret kesileceğini söyle.
+  - Ek bagaj 10, 15 ya da 20 kg olarak eklenebilir.
+  - Müşteri insanla görüşmek isterse, sağlık ya da güvenlik sorunu bildirirse ya da talep bu araçların dışındaysa insana_aktar kullan.
+  - Kısa ve net konuş, cümlelerin telefonda okunacak.
+
+tools:
+  - name: rezervasyon_sorgula
+    description: Rezervasyonun ayrıntılarını getirir.
+    parameters:
+      type: object
+      properties:
+        pnr: {type: string, description: 6 karakterlik rezervasyon kodu}
+      required: [pnr]
+  - name: rezervasyon_degistir
+    description: Rezervasyonun tarihini değiştirir.
+    parameters:
+      type: object
+      properties:
+        pnr: {type: string}
+        yeni_tarih: {type: string, description: "YYYY-AA-GG"}
+      required: [pnr, yeni_tarih]
+  - name: rezervasyon_iptal
+    description: Rezervasyonu iptal eder.
+    parameters:
+      type: object
+      properties:
+        pnr: {type: string}
+      required: [pnr]
+  - name: bagaj_ekle
+    description: Rezervasyona ek bagaj hakkı ekler.
+    parameters:
+      type: object
+      properties:
+        pnr: {type: string}
+        kg: {type: integer, enum: [10, 15, 20]}
+      required: [pnr, kg]
+  - name: insana_aktar
+    description: Görüşmeyi bir müşteri temsilcisine aktarır.
+    parameters:
+      type: object
+      properties:
+        sebep: {type: string}
+      required: [sebep]

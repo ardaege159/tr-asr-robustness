@@ -1,0 +1,52 @@
+# Runs the model experiment in the cloud so it can continue while the local machine is off.
+# Each run works for up to ~5.5 hours (free-tier quotas mean most of that is waiting), commits
+# whatever finished, and the next hourly trigger picks up from there. Only one run at a time.
+name: run-models
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: run-models
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -e .
+
+      - name: Run every model's plan in parallel
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          # Each process gets its own time limit, so none is still writing when results are committed.
+          for m in gemini:gemini-3.1-flash-lite groq:openai/gpt-oss-120b groq:openai/gpt-oss-20b groq:qwen/qwen3.8-27b; do
+            timeout 320m python -m trasr.run --plan --models "$m" &
+          done
+          wait || true
+          python -m trasr.run --summary
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/raw
+          git diff --cached --quiet && exit 0
+          git commit -m "results: automated run $(date -u '+%Y-%m-%d %H:%M')"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 10; done

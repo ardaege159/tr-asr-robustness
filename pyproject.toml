@@ -1,0 +1,30 @@
+[project]
+name = "trasr"
+version = "0.1.0"
+description = "How much do speech-recognition errors and spoken self-corrections break Turkish customer-service assistants?"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "edge-tts>=6.1",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "scipy>=1.11",
+    "jiwer>=3.0",
+    "pandas>=2.1",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
