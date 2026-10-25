@@ -51,12 +51,13 @@ async def _tts(text: str, voice: str, rate: str) -> bytes:
 
 
 def tts(text: str, voice: str, rate: str) -> tuple[np.ndarray, int]:
-    # The free TTS service drops requests now and then; they succeed on a later try.
+    # The free TTS service drops requests now and then, or leaves the connection hanging;
+    # they succeed on a later try.
     for attempt in range(8):
         try:
-            data = asyncio.run(_tts(text, voice, rate))
+            data = asyncio.run(asyncio.wait_for(_tts(text, voice, rate), timeout=90))
             break
-        except edge_tts.exceptions.NoAudioReceived:
+        except (edge_tts.exceptions.NoAudioReceived, TimeoutError):
             if attempt == 7:
                 raise
             time.sleep(3 + 4 * attempt)
