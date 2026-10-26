@@ -52,8 +52,10 @@ amounts accept `2.450,00`). Outcomes:
 
 What rules can't judge is graded by a separate model (`src/trasr/judge.py`) as yes/no questions: did the
 assistant *say* it did something it never called a tool for, did it follow the policy, did it repeat sensitive
-data, is the reply short enough to be spoken. I hand-labelled a random sample with the same questions; agreement
-with the judge is reported as percent agreement and Cohen's kappa.
+data, is the reply short enough to be spoken. I hand-labelled a random sample of 30 with the same questions; agreement
+with the judge is reported as percent agreement and Cohen's kappa. After labelling, Claude reviewed my labels and
+pointed out where I had graded the scripted assistant turns instead of the model's own output; I made the final
+call on each and changed 11 of 120 answers. The judge's prompt states the same rule.
 
 ### Fixes
 

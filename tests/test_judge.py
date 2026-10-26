@@ -1,3 +1,5 @@
+import math
+
 from trasr.judge import cohen_kappa
 
 
@@ -7,4 +9,4 @@ def test_kappa_perfect_and_chance():
 
 
 def test_kappa_all_same_label():
-    assert cohen_kappa([True, True], [True, True]) == 1.0
+    assert math.isnan(cohen_kappa([True, True], [True, True]))

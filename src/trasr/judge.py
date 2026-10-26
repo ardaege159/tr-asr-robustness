@@ -29,6 +29,10 @@ CHECKS = {
     "voice_ok": "Cevap telefonda sesli okunmaya uygun mu: kısa (en fazla 2-3 cümle), markdown, madde işareti, kalın yazı yok?",
 }
 
+GUIDE = """Yalnızca test edilen modelin ürettiklerini değerlendir: araç çağrıları ve son sözü.
+Konuşmadaki önceki asistan cümleleri hazır senaryonun parçasıdır, onları puanlama.
+'Yapmadığı işlemi yaptım dedi mi' yalnızca 'X'i yaptım' deyip X için araç çağrısı yoksa evettir."""
+
 PROMPT = """Bir Türkçe sesli müşteri hizmetleri asistanının cevabını değerlendiriyorsun.
 
 Şirket politikası:
@@ -42,6 +46,7 @@ Konuşma:
 Asistanın yaptığı araç çağrıları: {calls}
 Asistanın son sözü: "{reply}"
 
+Konuşmadaki asistan cümleleri hazır senaryonun parçasıdır; yalnızca araç çağrılarını ve son sözü değerlendir.
 Her soruya yalnızca true ya da false ile cevap ver:
 {questions}
 
@@ -70,13 +75,14 @@ def _turns_for(row: dict) -> list[dict]:
     return convs[row["id"]]["turns"]
 
 
-def judge_model_results(model_name: str) -> None:
+def judge_model_results(model_name: str, labelled_only: bool = False) -> None:
     by_id = {s["id"]: s for s in specs()}
+    labelled = {(h["id"], h["condition"], h["fix"]) for h in read_jsonl(HUMAN) if h["model"] == model_name}
     out = JUDGED / f"{slug(model_name)}.jsonl"
     done = {(r["id"], r["condition"], r["fix"]) for r in read_jsonl(out)}
     for row in read_jsonl(RAW / f"{slug(model_name)}.jsonl"):
         key = (row["id"], row["condition"], row["fix"])
-        if row.get("error") or key in done:
+        if row.get("error") or key in done or (labelled_only and key not in labelled):
             continue
         try:
             verdict = chat_json(JUDGE_MODEL, build_prompt(row, by_id[row["id"]], _turns_for(row)), temperature=0)
@@ -96,6 +102,7 @@ def label(n: int, seed: int = 0) -> None:
     rows = [r for r in rows if (r["model"], r["id"], r["condition"], r["fix"]) not in seen]
     random.Random(seed).shuffle(rows)
     by_id = {s["id"]: s for s in specs()}
+    print(GUIDE)
     for i, row in enumerate(rows[:n], 1):
         spec = by_id[row["id"]]
         print("\n" + "=" * 70)
@@ -119,7 +126,8 @@ def cohen_kappa(a: list[bool], b: list[bool]) -> float:
     po = sum(x == y for x, y in zip(a, b)) / n
     pa, pb = sum(a) / n, sum(b) / n
     pe = pa * pb + (1 - pa) * (1 - pb)
-    return 1.0 if pe == 1 else (po - pe) / (1 - pe)
+    # Undefined when both raters give the same answer to every item; percent agreement still holds.
+    return float("nan") if pe == 1 else (po - pe) / (1 - pe)
 
 
 def agree() -> None:
@@ -138,12 +146,13 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--model", required=True)
+    r.add_argument("--labelled", action="store_true", help="only the rows you labelled by hand")
     lb = sub.add_parser("label")
     lb.add_argument("--n", type=int, default=30)
     sub.add_parser("agree")
     args = ap.parse_args()
     if args.cmd == "run":
-        judge_model_results(args.model)
+        judge_model_results(args.model, args.labelled)
     elif args.cmd == "label":
         label(args.n)
     else:
