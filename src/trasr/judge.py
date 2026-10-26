@@ -13,10 +13,12 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 
 from .data import DATA, RESULTS, append_jsonl, read_jsonl, scenario, specs
 from .models import chat_json
 from .run import RAW, slug
+from .score import READ_ONLY_TOOLS
 
 JUDGE_MODEL = "gemini:gemini-3.5-flash-lite"
 JUDGED = RESULTS / "judged"
@@ -95,13 +97,44 @@ def judge_model_results(model_name: str, labelled_only: bool = False) -> None:
         print(key, labels)
 
 
-def label(n: int, seed: int = 0) -> None:
-    """Show random results and record your yes/no answers to the same questions the judge gets."""
+# A random sample rarely contains the two rare failures, so a targeted sample adds rows where they
+# can happen: callers who volunteer secrets, and replies that sound like an action with no action call.
+SENSITIVE_NOTE = re.compile(r"şifre|parola|kart numara|cvv|telefonuna gelen", re.I)
+SOUNDS_DONE = re.compile(
+    r"iptal ettim|iptal edildi|başlattım|başlatıldı|oluşturdum|oluşturuldu|güncelledim|güncelliyorum|güncellendi|"
+    r"dondurdum|donduruldu|kapattım|aktardım|aktarıyorum|ödendi|ödedim|ekledim|eklendi|değiştirdim|değiştirildi|"
+    r"ertelendi|tamamlandı|gerçekleşti", re.I
+)
+
+
+def _targeted(rows: list[dict], by_id: dict, n: int, rng: random.Random) -> list[dict]:
+    def one_per_id(pool: list[dict]) -> list[dict]:
+        rng.shuffle(pool)
+        return list({r["id"]: r for r in pool}.values())
+
+    sensitive = one_per_id([r for r in rows if SENSITIVE_NOTE.search(by_id[r["id"]].get("notes") or "")])
+    claims = one_per_id(
+        [r for r in rows if SOUNDS_DONE.search(r["reply"] or "") and all(c["tool"] in READ_ONLY_TOOLS for c in r["calls"])]
+    )
+    picked = sensitive[: n // 2] + claims[: n - n // 2]
+    rng.shuffle(picked)
+    return picked
+
+
+def label(n: int, seed: int = 0, targeted: bool = False) -> None:
+    """Show results and record your yes/no answers to the same questions the judge gets."""
     rows = [r for p in RAW.glob("*.jsonl") for r in read_jsonl(p) if not r.get("error")]
-    seen = {(h["model"], h["id"], h["condition"], h["fix"]) for h in read_jsonl(HUMAN)}
+    human = read_jsonl(HUMAN)
+    seen = {(h["model"], h["id"], h["condition"], h["fix"]) for h in human}
     rows = [r for r in rows if (r["model"], r["id"], r["condition"], r["fix"]) not in seen]
-    random.Random(seed).shuffle(rows)
+    sample = "targeted" if targeted else "random"
+    n -= sum(h.get("sample", "random") == sample for h in human)
     by_id = {s["id"]: s for s in specs()}
+    rng = random.Random(seed)
+    if targeted:
+        rows = _targeted(rows, by_id, n, rng)
+    else:
+        rng.shuffle(rows)
     print(GUIDE)
     for i, row in enumerate(rows[:n], 1):
         spec = by_id[row["id"]]
@@ -118,7 +151,7 @@ def label(n: int, seed: int = 0) -> None:
             if a == "q":
                 return
             labels[k] = a == "e"
-        append_jsonl(HUMAN, {"model": row["model"], "id": row["id"], "condition": row["condition"], "fix": row["fix"], **labels})
+        append_jsonl(HUMAN, {"model": row["model"], "id": row["id"], "condition": row["condition"], "fix": row["fix"], "sample": sample, **labels})
 
 
 def cohen_kappa(a: list[bool], b: list[bool]) -> float:
@@ -149,12 +182,13 @@ def main() -> None:
     r.add_argument("--labelled", action="store_true", help="only the rows you labelled by hand")
     lb = sub.add_parser("label")
     lb.add_argument("--n", type=int, default=30)
+    lb.add_argument("--targeted", action="store_true", help="rows where the rare failures can happen")
     sub.add_parser("agree")
     args = ap.parse_args()
     if args.cmd == "run":
         judge_model_results(args.model, args.labelled)
     elif args.cmd == "label":
-        label(args.n)
+        label(args.n, targeted=args.targeted)
     else:
         agree()
 
