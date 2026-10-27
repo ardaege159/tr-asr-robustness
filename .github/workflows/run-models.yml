@@ -20,7 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
+      # A queued run would otherwise check out the commit it was triggered on and redo rows the
+      # previous run already committed.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
@@ -42,7 +46,15 @@ jobs:
           wait || true
           python -m trasr.run --summary
 
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raw-${{ github.run_id }}
+          path: results/raw/
+          retention-days: 14
+
       - name: Commit results
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

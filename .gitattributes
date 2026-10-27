@@ -1,0 +1,2 @@
+# Result files only ever gain rows; keep both sides' rows when two runs overlap.
+results/raw/*.jsonl merge=union
