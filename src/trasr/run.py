@@ -1,7 +1,7 @@
 """Play every conversation to every model, score the tool calls, and save raw results.
 
     python -m trasr.run --models gemini:gemini-3.1-flash-lite --conditions clean asr
-    python -m trasr.run --plan --models groq:openai/gpt-oss-120b    # the full experiment for one model
+    python -m trasr.run --plan --models groq:openai/gpt-oss-120b    # the experiment for one model, on data/subset.txt
     python -m trasr.run --summary
 
 Results go to results/raw/<model>.jsonl, one row per (spec, condition, fix); reruns skip rows
@@ -14,7 +14,7 @@ import argparse
 import re
 from collections import Counter, defaultdict
 
-from .data import CONDITIONS, RESULTS, append_jsonl, conversations, read_jsonl, specs
+from .data import CONDITIONS, DATA, RESULTS, append_jsonl, conversations, read_jsonl, specs
 from .models import DailyQuota, run_assistant
 from .score import score
 
@@ -29,6 +29,14 @@ FIXES = [("confirm", ["asr", "selfcorr_asr"]), ("prompt", ["asr"])]
 # Groq's free tier allows 200k tokens/day per model, about 80 conversations, which covers the
 # baseline but not the fixes; those run on the model with a separate request quota.
 FIX_MODELS = {"gemini:gemini-3.1-flash-lite"}
+
+# The plan runs on a fixed subset of 50 answer keys so that every condition and fix can finish on
+# free-tier quotas; rows already run on other keys are kept and reported separately.
+SUBSET = DATA / "subset.txt"
+
+
+def subset_ids() -> list[str]:
+    return [line.strip() for line in SUBSET.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
 
 
 def plan(model_name: str) -> list[tuple[str, list[str]]]:
@@ -98,6 +106,8 @@ def main() -> None:
     ap.add_argument("--plan", action="store_true", help="run every step of plan(model)")
     ap.add_argument("--summary", action="store_true")
     args = ap.parse_args()
+    if args.plan and args.ids is None:
+        args.ids = subset_ids()
     for m in args.models or (MODELS if args.plan else []):
         try:
             for fix, conds in plan(m) if args.plan else [(args.fix, args.conditions)]:

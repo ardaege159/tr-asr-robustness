@@ -118,8 +118,11 @@ tests/            scorer and statistics tests
   is both the generator and one of the models under test, which may favour it.
 - **Free-tier quotas** shaped the design. Groq allows 200k tokens per model per day (about 80 conversations), which
   covers the baseline for its three models but not the fixes, so the fixes are tested on `gemini-3.1-flash-lite`
-  only, and only on the speech conditions. Each cell has 85–100 conversations, so the 95% confidence intervals in
-  the summary are wide enough to matter.
+  only, and only on the speech conditions. To finish every condition and fix in time, the main comparison uses a
+  fixed random subset of 50 answer keys with a self-correction (`data/subset.txt`, stratified by company), so every
+  cell covers the same 50 conversations and differences between conditions are paired. Clean and ASR results on
+  all 100 keys, run earlier, are reported as a check. With 50 per cell the 95% confidence intervals are about ±13
+  points, wide enough to matter.
 - **Latency is indicative only.** Free endpoints are shared, and the runs were split between a machine in Turkey
   and GitHub Actions runners (`.github/workflows/run-models.yml`), so latency differs by network location.
   Accuracy is unaffected.
