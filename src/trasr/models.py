@@ -44,6 +44,16 @@ class DailyQuota(Exception):
 MAX_QUOTA_WAIT_S = 30 * 60
 
 
+def _rate_limit_text(e: Exception) -> str:
+    """Message plus response body: Gemini sends its 429 details as a JSON list, so str(e) is only 'Error code: 429'."""
+    response = getattr(e, "response", None)
+    try:
+        body = response.text if response is not None else ""
+    except Exception:
+        body = ""
+    return f"{e} {body}"
+
+
 def _retry_after(message: str) -> float | None:
     """Seconds from 'try again in 3m12.2s' (Groq) or 'retry in 22h39m9.4s' (Gemini)."""
     if m := re.search(r"(?:try again|retry) in ([\d.]+)ms", message):
@@ -69,7 +79,10 @@ def _create(provider: str, attempts: int = 6, **kwargs):
             resp = client(provider).chat.completions.create(**kwargs)
             return resp, time.perf_counter() - t0
         except RateLimitError as e:
-            msg = str(e)
+            msg = _rate_limit_text(e)
+            if "PerDay" in msg:
+                # Gemini's per-day request quota resets at midnight Pacific; its retryDelay is not that.
+                raise DailyQuota(msg[:300]) from e
             if re.search(r"per day|\(TPD\)|\(RPD\)", msg):
                 wait = _retry_after(msg)
                 if wait is None or wait > MAX_QUOTA_WAIT_S:
