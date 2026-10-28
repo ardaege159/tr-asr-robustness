@@ -15,11 +15,11 @@ record using a number the caller never said:
 | Model | Correct, ID intact | Correct, ID corrupted | Acted on the corrupted value | Asked instead |
 |---|---:|---:|---:|---:|
 | gpt-oss-20b | 68% | 0% | 71% | 17% |
-| qwen3.8-27b | 56% | 4% | 48% | 43% |
+| qwen3.8-27b | 60% | 4% | 46% | 46% |
 | gemini-3.1-flash-lite | 77% | 0% | 33% | 58% |
 | gpt-oss-120b | 68% | 0% | 33% | 58% |
 
-*Speech conditions (`asr` + `selfcorr_asr`), no fix, 50-key subset; 23–24 corrupted and 55–60 intact rows per model.*
+*Speech conditions (`asr` + `selfcorr_asr`), no fix, 50-key subset; 24 corrupted and 60 intact rows per model.*
 
 - **Self-correction is not the problem.** Without speech errors no model used the value the caller took back, and
   accuracy with a correction matched accuracy without one (gpt-oss-120b: 80% clean, 86% with a correction). The
