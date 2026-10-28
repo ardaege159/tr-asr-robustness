@@ -39,6 +39,14 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return max(0.0, centre - half), min(1.0, centre + half)
 
 
+def mcnemar(gained: int, lost: int) -> float:
+    """Exact two-sided McNemar p-value for paired yes/no outcomes."""
+    n = gained + lost
+    if n == 0:
+        return 1.0
+    return min(1.0, 2 * sum(math.comb(n, j) for j in range(min(gained, lost) + 1)) / 2**n)
+
+
 def pct(values: list[float], q: float) -> float:
     if not values:
         return float("nan")
@@ -236,6 +244,29 @@ def confirm_failures(rows: list[dict]) -> list[str]:
     return [f"Teyit, numarası bozuk gelen {total} satırda; başarısız olanların nedeni takip konuşmasından çıkarıldı.", "", *lines]
 
 
+def fix_tests(rows: list[dict]) -> list[str]:
+    """Each fix against no fix on the same conversations, overall and where an ID arrived corrupted."""
+    intact = {(c["id"], cond): all(c["ids_kept"].values()) for cond in ("asr", "selfcorr_asr") for c in conversations(cond) if c["ids_kept"]}
+    ok = {(r["model"], r["id"], r["condition"], r["fix"]): r["outcome"] == "correct" for r in rows}
+    lines = ["| Model | İyileştirme | Koşul | Satırlar | n | Yok → var | Kazandı | Kaybetti | p (McNemar) |", "|---|---|---|---|---:|---|---:|---:|---:|"]
+    cells = sorted({(m, f, c) for m, _, c, f in ok if f != "none"})
+    for model, fix, cond in cells:
+        for subset_name, keep in (("hepsi", lambda i: True), ("bozuk numara", lambda i, c=cond: intact.get((i, c)) is False)):
+            pairs = [(ok[(model, i, cond, "none")], v) for (m, i, c, f), v in ok.items()
+                     if (m, c, f) == (model, cond, fix) and (model, i, cond, "none") in ok and keep(i)]
+            if not pairs:
+                continue
+            n = len(pairs)
+            gained = sum(not a and b for a, b in pairs)
+            lost = sum(a and not b for a, b in pairs)
+            before, after = sum(a for a, _ in pairs) / n, sum(b for _, b in pairs) / n
+            lines.append(
+                f"| {short(model)} | {FIX_LABELS[fix]} | {CONDITION_LABELS[cond]} | {subset_name} | {n} | {before:.0%} → {after:.0%} "
+                f"| {gained} | {lost} | {mcnemar(gained, lost):.3f} |"
+            )
+    return lines
+
+
 def agreement() -> list[str]:
     """Judge and the claimed_without_call rule against the hand labels."""
     human = read_jsonl(HUMAN)
@@ -280,6 +311,7 @@ def main() -> None:
         "müşterinin söylemediği bir numarayla kayıt değiştirmek demek.", "",
         *heard_vs_meant(rows), "",
     ]
+    md += ["### İyileştirmeler aynı konuşmalarda fark yarattı mı?", "", *fix_tests(rows), ""]
     if failures := confirm_failures(rows):
         md += ["### Teyit neden yetmedi", "", *failures, ""]
     md += ["## Doğru araç çağrısı oranı", "", "| Model | İyileştirme | Koşul | n | Doğru | %95 GA | İlk cevap p50 / p95 (s) | Ek tur | Sorup bıraktı | Düzeltilmişi değil ilkini aldı |", "|---|---|---|---:|---:|---|---|---:|---:|---:|"]

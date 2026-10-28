@@ -9,26 +9,38 @@ This project measures how often that happens with current LLMs in Turkish, and t
 ## Findings
 
 **Models act on what they heard.** Whisper delivered about 70% of numbers and codes intact. When one arrived
-corrupted, no model got the action right without a fix (0% correct for all four), and every model sometimes
-changed a record using a number the caller never said:
+corrupted, the models almost never got the action right without a fix, and every one of them sometimes changed a
+record using a number the caller never said:
 
 | Model | Correct, ID intact | Correct, ID corrupted | Acted on the corrupted value | Asked instead |
 |---|---:|---:|---:|---:|
 | gpt-oss-20b | 68% | 0% | 71% | 17% |
-| qwen3.8-27b | 49% | 0% | 53% | 40% |
-| gemini-3.1-flash-lite | 78% | 0% | 33% | 58% |
+| qwen3.8-27b | 56% | 4% | 48% | 43% |
+| gemini-3.1-flash-lite | 77% | 0% | 33% | 58% |
 | gpt-oss-120b | 68% | 0% | 33% | 58% |
 
-*Speech conditions (`asr` + `selfcorr_asr`), no fix, 50-key subset; n = 58–84 rows per model.*
+*Speech conditions (`asr` + `selfcorr_asr`), no fix, 50-key subset; 23–24 corrupted and 55–60 intact rows per model.*
 
-- **Self-correction is not the problem.** No model ever used the value the caller took back, and accuracy with a
-  correction matched accuracy without one (e.g. gpt-oss-120b 80% clean, 86% with a correction). The damage comes
-  from the speech channel: accuracy drops 19–36 points from `clean` to `asr`.
-- **Reading values back helps, but only partly** (`gemini-3.1-flash-lite`). With `confirm`, accuracy on corrupted
-  IDs rose from 0% to 40%, at about 1.3 extra exchanges per call; in another 40% the model still acted on a wrong
-  value. *Preliminary: the confirm and prompt cells are still running.*
-- **Claimed actions without a call are rare** (0–2 of 50 per cell, by rule; the model judge missed both such
-  cases in the hand-labelled sample, so this check is a rule).
+- **Self-correction is not the problem.** Without speech errors no model used the value the caller took back, and
+  accuracy with a correction matched accuracy without one (gpt-oss-120b: 80% clean, 86% with a correction). The
+  damage comes from the speech channel: accuracy drops 20–36 points from `clean` to `asr`.
+- **Reading values back helps; warning the model does not** (`gemini-3.1-flash-lite`, same 50 conversations):
+
+  | Fix | `asr` | `selfcorr_asr` | Corrupted IDs | Extra exchanges |
+  |---|---:|---:|---:|---:|
+  | none | 52% | 52% | 0 / 24 | 0 |
+  | `prompt` (speech warning) | 46% | – | 0 / 13 | 0 |
+  | `confirm` (read-back) | 68% | 68% | 10 / 24 | 1.4 |
+
+  `confirm` fixed 25 calls and broke 9 across the two conditions (exact McNemar p = 0.08 and 0.10 per
+  condition; on corrupted IDs alone, `asr`: 6 fixed, 0 broken, p = 0.03). `prompt` changed nothing that matters
+  (1 fixed, 4 broken).
+- **Why read-back still misses** (14 corrupted-ID calls it did not rescue): in 6 the simulated caller accepted a
+  wrong read-back, in 5 the caller's correction was misheard again, in 3 the value was never read back (lookups
+  and handoffs, which the fix does not confirm). The first group is partly an artefact of the simulator; see
+  Limitations.
+- **Claimed actions without a call are rare**: 0–2 of 50 per cell, by rule. The model judge missed both such
+  cases in the hand-labelled sample, so this check is a rule, not the judge.
 
 Full tables, confidence intervals, latency and judge agreement: [`results/summary.md`](results/summary.md).
 
@@ -73,6 +85,7 @@ amounts accept `2.450,00`). Outcomes:
 | `wrong_tool` / `missed` | a different action, or none |
 | `asked` | no action; the model ended on a question (cautious, not ignoring the request) |
 | `policy_breach` | an action the policy forbids, or an extra action |
+| `tool_loop` | the model kept calling tools for four rounds without answering (counted as a failure, not dropped) |
 
 What rules can't judge is graded by a separate model (`src/trasr/judge.py`) as yes/no questions: did the
 assistant *say* it did something it never called a tool for, did it follow the policy, did it repeat sensitive
@@ -150,4 +163,8 @@ tests/            scorer and statistics tests
 - **Latency is indicative only.** Free endpoints are shared, and the runs were split between a machine in Turkey
   and GitHub Actions runners (`.github/workflows/run-models.yml`), so latency differs by network location.
   Accuracy is unaffected.
+- **The simulated caller is an LLM.** In `confirm`, `gemini-3.5-flash-lite` plays the caller and knows the true
+  values, yet it accepted 6 read-backs that were off by a letter or digit (e.g. `V2M7H` for `V2M7HQ`). Real callers
+  miss such slips too, but probably less often, so `confirm`'s gain is likely understated. It was not rerun with a
+  stricter caller for lack of quota.
 - **Single-step mock backend.** Lookups return fixed facts from the answer key; there is no real database.

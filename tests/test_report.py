@@ -28,3 +28,11 @@ def test_claim_rule_ignores_offers():
     claim = {"reply": "Siparişinizi iptal ediyorum.", "calls": [{"tool": "siparis_sorgula", "args": {}}]}
     assert not claimed_without_call(offer)
     assert claimed_without_call(claim)
+
+
+def test_mcnemar():
+    from trasr.report import mcnemar
+
+    assert mcnemar(0, 0) == 1.0
+    assert abs(mcnemar(10, 0) - 2 / 1024) < 1e-12
+    assert mcnemar(4, 4) == 1.0
