@@ -19,7 +19,8 @@ import re  # noqa: E402
 
 from .judge import CHECKS, HUMAN, JUDGED, SOUNDS_DONE, cohen_kappa  # noqa: E402
 from .run import RAW, subset_ids  # noqa: E402
-from .score import READ_ONLY_TOOLS  # noqa: E402
+from .data import specs  # noqa: E402
+from .score import ID_ARGS, READ_ONLY_TOOLS, norm_id  # noqa: E402
 
 CONDITION_LABELS = {"clean": "Temiz", "asr": "Ses tanıma", "selfcorr": "Kendini düzeltme", "selfcorr_asr": "Düzeltme + ses"}
 FIX_LABELS = {"none": "İyileştirme yok", "prompt": "Talimat", "confirm": "Teyit"}
@@ -153,6 +154,79 @@ def heard_vs_meant(rows: list[dict]) -> list[str]:
     return lines
 
 
+NO = re.compile(r"\b(hayır|yanlış|değil)\b", re.I)
+
+
+def _distance(a: str, b: str) -> int:
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def near(value: str, text: str, max_edits: int = 2) -> bool:
+    """Some stretch of text is within max_edits of value: a read-back, possibly of a misheard ID."""
+    n = len(value)
+    return any(
+        _distance(value, text[i : i + w]) <= max_edits for w in (n - 1, n, n + 1) for i in range(max(1, len(text) - w + 1))
+    )
+
+
+def confirm_failure(row: dict, true_ids: list[str]) -> str:
+    """Why a read-back did not rescue a corrupted ID, from the follow-up dialogue.
+
+    accepted   an assistant turn read a wrong value and the simulated caller did not object
+    misheard   the caller's correction reached the model without the true value
+    no_readback the model never read the value back (e.g. lookups, which the fix does not confirm)
+    """
+    turns = row["dialogue"]
+    read_back = False
+    for i, t in enumerate(turns[:-1]):
+        if t["role"] != "assistant":
+            continue
+        said = norm_id(t["text"])
+        if not any(near(v, said) for v in true_ids):
+            continue  # this turn did not read an ID back
+        read_back = True
+        if not all(v in said for v in true_ids) and not NO.search(turns[i + 1]["text"]):
+            return "accepted"
+    if any(t["role"] == "user" and NO.search(t["text"]) and not all(v in norm_id(t["text"]) for v in true_ids) for t in turns):
+        return "misheard"
+    return "other" if read_back else "no_readback"
+
+
+CONFIRM_FAILURE_LABELS = {
+    "accepted": "Simüle müşteri yanlış okumayı onayladı",
+    "misheard": "Müşterinin düzeltmesi de yanlış duyuldu",
+    "no_readback": "Değer geri okunmadı",
+    "other": "Diğer",
+}
+
+
+def confirm_failures(rows: list[dict]) -> list[str]:
+    intact = {(c["id"], cond): all(c["ids_kept"].values()) for cond in ("asr", "selfcorr_asr") for c in conversations(cond) if c["ids_kept"]}
+    by_id = {sp["id"]: sp for sp in specs()}
+    counts: dict[str, int] = defaultdict(int)
+    total = 0
+    for r in rows:
+        if r["fix"] != "confirm" or intact.get((r["id"], r["condition"]), True):
+            continue
+        total += 1
+        if r["outcome"] == "correct":
+            counts["correct"] += 1
+            continue
+        ids = [norm_id(v) for e in by_id[r["id"]]["expected"] for k, v in e["args"].items() if k in ID_ARGS]
+        counts[confirm_failure(r, ids)] += 1
+    if not total:
+        return []
+    lines = ["| Sonuç | Satır |", "|---|---:|", f"| Doğru | {counts.pop('correct', 0)} |"]
+    lines += [f"| {CONFIRM_FAILURE_LABELS[k]} | {v} |" for k, v in sorted(counts.items(), key=lambda x: -x[1])]
+    return [f"Teyit, numarası bozuk gelen {total} satırda; başarısız olanların nedeni takip konuşmasından çıkarıldı.", "", *lines]
+
+
 def agreement() -> list[str]:
     """Judge and the claimed_without_call rule against the hand labels."""
     human = read_jsonl(HUMAN)
@@ -197,6 +271,8 @@ def main() -> None:
         "müşterinin söylemediği bir numarayla kayıt değiştirmek demek.", "",
         *heard_vs_meant(rows), "",
     ]
+    if failures := confirm_failures(rows):
+        md += ["### Teyit neden yetmedi", "", *failures, ""]
     md += ["## Doğru araç çağrısı oranı", "", "| Model | İyileştirme | Koşul | n | Doğru | %95 GA | İlk cevap p50 / p95 (s) | Ek tur | Sorup bıraktı | Düzeltilmişi değil ilkini aldı |", "|---|---|---|---:|---:|---|---|---:|---:|---:|"]
     for (model, fix, cond), rs in sorted(cell.items(), key=lambda x: (x[0][0], list(FIX_LABELS).index(x[0][1]) if x[0][1] in FIX_LABELS else 9, CONDITIONS.index(x[0][2]))):
         k, n = kn(model, fix, cond)
