@@ -53,7 +53,15 @@ def load() -> list[dict]:
             key = (r["model"], r["id"], r["condition"], r["fix"])
             if key not in latest or latest[key].get("error"):
                 latest[key] = r
-    return [r for r in latest.values() if not r.get("error")]
+    # A model that keeps calling tools without ever answering has failed the call, not the harness;
+    # every other error (quota, TTS, malformed request) is excluded.
+    rows = []
+    for r in latest.values():
+        if r.get("error") == "max_tool_rounds":
+            rows.append({**r, "outcome": "tool_loop", "detail": "no answer after MAX_TOOL_ROUNDS tool rounds"})
+        elif not r.get("error"):
+            rows.append(r)
+    return rows
 
 
 def short(model: str) -> str:
@@ -117,6 +125,7 @@ def asr_stats() -> list[str]:
 OUTCOME_LABELS = {
     "correct": "Doğru", "wrong_args": "Yanlış değerle işlem", "asked": "Sordu", "took_first": "İlk değeri aldı",
     "wrong_tool": "Yanlış işlem", "missed": "İşlem yok", "policy_breach": "Politika ihlali",
+    "tool_loop": "Araç döngüsü",
 }
 
 
