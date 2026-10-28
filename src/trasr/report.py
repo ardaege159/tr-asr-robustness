@@ -15,7 +15,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from .data import CONDITIONS, RESULTS, conversations, read_jsonl  # noqa: E402
-from .run import RAW  # noqa: E402
+import re  # noqa: E402
+
+from .judge import CHECKS, HUMAN, JUDGED, SOUNDS_DONE, cohen_kappa  # noqa: E402
+from .run import RAW, subset_ids  # noqa: E402
+from .score import READ_ONLY_TOOLS  # noqa: E402
 
 CONDITION_LABELS = {"clean": "Temiz", "asr": "Ses tanıma", "selfcorr": "Kendini düzeltme", "selfcorr_asr": "Düzeltme + ses"}
 FIX_LABELS = {"none": "İyileştirme yok", "prompt": "Talimat", "confirm": "Teyit"}
@@ -109,8 +113,71 @@ def asr_stats() -> list[str]:
     return lines
 
 
+OUTCOME_LABELS = {
+    "correct": "Doğru", "wrong_args": "Yanlış değerle işlem", "asked": "Sordu", "took_first": "İlk değeri aldı",
+    "wrong_tool": "Yanlış işlem", "missed": "İşlem yok", "policy_breach": "Politika ihlali",
+}
+
+
+# The labelling sample's pattern, as whole words ("gerçekleşti" must not match "gerçekleştirebilirim",
+# an offer), plus the present-tense "iptal ediyorum" it missed.
+CLAIM = re.compile(rf"(?:{SOUNDS_DONE.pattern}|iptal ediyorum)(?!\w)", re.I)
+
+
+def claimed_without_call(row: dict) -> bool:
+    """The reply says something was done, but no call changed a record.
+
+    The model judge missed both such cases in the hand-labelled sample, so this check is a rule.
+    """
+    return bool(CLAIM.search(row["reply"] or "")) and all(c["tool"] in READ_ONLY_TOOLS for c in row["calls"])
+
+
+def heard_vs_meant(rows: list[dict]) -> list[str]:
+    """Speech conditions split by whether every number and code reached the model intact."""
+    intact = {(c["id"], cond): all(c["ids_kept"].values()) for cond in ("asr", "selfcorr_asr") for c in conversations(cond) if c["ids_kept"]}
+    groups: dict[tuple, list[str]] = defaultdict(list)
+    for r in rows:
+        if (k := intact.get((r["id"], r["condition"]))) is not None:
+            groups[(r["model"], r["fix"], k)].append(r["outcome"])
+    shown = ["correct", "wrong_args", "asked"]
+    lines = [
+        "| Model | İyileştirme | Numara/kod | n | " + " | ".join(OUTCOME_LABELS[o] for o in shown) + " | Diğer |",
+        "|---|---|---|---:|" + "---:|" * (len(shown) + 1),
+    ]
+    order = list(FIX_LABELS)
+    for (model, fix, k), outs in sorted(groups.items(), key=lambda x: (x[0][0], order.index(x[0][1]), not x[0][2])):
+        n = len(outs)
+        cells = [f"{outs.count(o) / n:.0%}" for o in shown]
+        other = n - sum(outs.count(o) for o in shown)
+        lines.append(f"| {short(model)} | {FIX_LABELS[fix]} | {'sağlam' if k else '**bozuk**'} | {n} | " + " | ".join(cells) + f" | {other / n:.0%} |")
+    return lines
+
+
+def agreement() -> list[str]:
+    """Judge and the claimed_without_call rule against the hand labels."""
+    human = read_jsonl(HUMAN)
+    judged = {(r["model"], r["id"], r["condition"], r["fix"]): r for p in JUDGED.glob("*.jsonl") for r in read_jsonl(p)}
+    raw = {(r["model"], r["id"], r["condition"], r["fix"]): r for p in sorted(RAW.glob("*.jsonl")) for r in read_jsonl(p) if not r.get("error")}
+    lines = ["| Kontrol | Puanlayan | n | Uyum | Kappa | İnsan evet | Puanlayan evet |", "|---|---|---:|---:|---:|---:|---:|"]
+
+    def row(check, who, pairs):
+        a, b = [x for x, _ in pairs], [y for _, y in pairs]
+        if a:
+            kappa = cohen_kappa(a, b)
+            lines.append(f"| {check} | {who} | {len(a)} | {sum(x == y for x, y in pairs) / len(a):.0%} | {'-' if math.isnan(kappa) else f'{kappa:.2f}'} | {sum(a)} | {sum(b)} |")
+
+    keyed = [((h["model"], h["id"], h["condition"], h["fix"]), h) for h in human]
+    for check in CHECKS:
+        row(check, "model", [(h[check], judged[k][check]) for k, h in keyed if k in judged])
+        if check == "claimed_without_call":
+            row(check, "kural", [(h[check], claimed_without_call(raw[k])) for k, h in keyed if k in raw])
+    return lines
+
+
 def main() -> None:
-    rows = load()
+    every = load()
+    subset = set(subset_ids())
+    rows = [r for r in every if r["id"] in subset]
     RESULTS.mkdir(exist_ok=True)
     models = sorted({r["model"] for r in rows})
     cell: dict[tuple, list[dict]] = defaultdict(list)
@@ -121,7 +188,15 @@ def main() -> None:
         rs = cell.get((model, fix, cond), [])
         return sum(r["outcome"] == "correct" for r in rs), len(rs)
 
-    md = ["# Sonuçlar", "", "## Ses tanıma zinciri", "", *asr_stats(), ""]
+    md = ["# Sonuçlar", "", f"Ana tablolar {len(subset)} cevap anahtarlık sabit alt kümeden (`data/subset.txt`); her hücre aynı konuşmalar.", ""]
+    md += ["## Ses tanıma zinciri", "", *asr_stats(), ""]
+    md += [
+        "## Duyduğuna mı, kastedilene mi göre davrandı?", "",
+        "Ses koşulları, numara ve kodların ses tanımadan bozulmadan geçip geçmediğine göre ayrıldı. "
+        "Bozuk satırda doğru cevap ancak model sorup doğrusunu öğrenirse mümkün; *yanlış değerle işlem* "
+        "müşterinin söylemediği bir numarayla kayıt değiştirmek demek.", "",
+        *heard_vs_meant(rows), "",
+    ]
     md += ["## Doğru araç çağrısı oranı", "", "| Model | İyileştirme | Koşul | n | Doğru | %95 GA | İlk cevap p50 / p95 (s) | Ek tur | Sorup bıraktı | Düzeltilmişi değil ilkini aldı |", "|---|---|---|---:|---:|---|---|---:|---:|---:|"]
     for (model, fix, cond), rs in sorted(cell.items(), key=lambda x: (x[0][0], list(FIX_LABELS).index(x[0][1]) if x[0][1] in FIX_LABELS else 9, CONDITIONS.index(x[0][2]))):
         k, n = kn(model, fix, cond)
@@ -133,19 +208,25 @@ def main() -> None:
             f"| {sum(r['outcome'] == 'asked' for r in rs)} | {sum(r['outcome'] == 'took_first' for r in rs)} |"
         )
 
-    judged = [r for p in (RESULTS / "judged").glob("*.jsonl") for r in read_jsonl(p)]
-    if judged:
-        md += ["", "## Model değerlendirici (judge) bulguları", "", "| Model | İyileştirme | n | Yapmadan yaptım dedi | Politikaya uygun | Hassas bilgi tekrarı | Sese uygun |", "|---|---|---:|---:|---:|---:|---:|"]
-        by: dict[tuple, list] = defaultdict(list)
-        for r in judged:
-            by[(r["model"], r["fix"])].append(r)
-        for (model, fix), rs in sorted(by.items()):
-            n = len(rs)
-            md.append(
-                f"| {short(model)} | {FIX_LABELS.get(fix, fix)} | {n} | "
-                + " | ".join(f"{sum(r[k] for r in rs) / n:.0%}" for k in ("claimed_without_call", "policy_ok", "leaks_sensitive", "voice_ok"))
-                + " |"
-            )
+    md += ["", "## Yapmadığı işlemi yaptım dedi", "", "Kural: cevap bir işlemin yapıldığını söylüyor (`report.CLAIM`) ama kayıt değiştiren bir araç çağrısı yok. Kural, elle etiketlenen 40 örnekte görülen kalıplardan yazıldı; aşağıdaki uyum değeri bu yüzden iyimser.", ""]
+    md += ["| Model | " + " | ".join(CONDITION_LABELS[c] for c in CONDITIONS) + " |", "|---|" + "---:|" * len(CONDITIONS)]
+    for model in models:
+        cells = []
+        for cond in CONDITIONS:
+            rs = cell.get((model, "none", cond), [])
+            cells.append(f"{sum(map(claimed_without_call, rs))}/{len(rs)}" if rs else "-")
+        md.append(f"| {short(model)} | " + " | ".join(cells) + " |")
+
+    md += ["", "## Puanlayıcıların insan etiketleriyle uyumu", "", *agreement()]
+
+    # Rows outside the subset were run before it was fixed; shown only as a check on the subset's numbers.
+    full = defaultdict(list)
+    for r in every:
+        if r["fix"] == "none" and r["condition"] in ("clean", "asr"):
+            full[(r["model"], r["condition"])].append(r["outcome"] == "correct")
+    md += ["", "## Kontrol: tüm 100 cevap anahtarı (iyileştirme yok)", "", "| Model | Koşul | n | Doğru |", "|---|---|---:|---:|"]
+    for (model, cond), oks in sorted(full.items()):
+        md.append(f"| {short(model)} | {CONDITION_LABELS[cond]} | {len(oks)} | {sum(oks) / len(oks):.0%} |")
 
     grouped_bars(
         RESULTS / "accuracy_by_condition.png", list(CONDITIONS), models,
