@@ -6,6 +6,8 @@ Voice assistants don't read what the customer typed; they read a speech-to-text 
 order number, a card's last four, or a booking code is enough to cancel the wrong order or freeze the wrong card.
 This project measures how often that happens with current LLMs in Turkish, and tests a fix.
 
+*Status: complete (28 October 2026). Every model, condition and fix in the plan has all 50 subset conversations.*
+
 ## Findings
 
 **Models act on what they heard.** Whisper delivered about 70% of numbers and codes intact. When one arrived
@@ -158,10 +160,11 @@ tests/            scorer and statistics tests
   only, and only on the speech conditions. To finish every condition and fix in time, the main comparison uses a
   fixed random subset of 50 answer keys with a self-correction (`data/subset.txt`, stratified by company), so every
   cell covers the same 50 conversations and differences between conditions are paired. Clean and ASR results on
-  all 100 keys, run earlier, are reported as a check. With 50 per cell the 95% confidence intervals are about ±13
+  all 100 keys, run earlier, are reported as a check (94–100 per cell: a few early rows hit rate limits
+  outside the subset and were not retried). With 50 per cell the 95% confidence intervals are about ±13
   points, wide enough to matter.
 - **Latency is indicative only.** Free endpoints are shared, and the runs were split between a machine in Turkey
-  and GitHub Actions runners (`.github/workflows/run-models.yml`), so latency differs by network location.
+  and GitHub Actions runners (`.github/workflows/run-models.yml`, now disabled), so latency differs by network location.
   Accuracy is unaffected.
 - **The simulated caller is an LLM.** In `confirm`, `gemini-3.5-flash-lite` plays the caller and knows the true
   values, yet it accepted 6 read-backs that were off by a letter or digit (e.g. `V2M7H` for `V2M7HQ`). Real callers
