@@ -38,9 +38,11 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           PYTHONUNBUFFERED: "1"
+          # Repository variable MODELS overrides the list, e.g. to leave a model to a local run.
+          MODELS: ${{ vars.MODELS || 'gemini:gemini-3.1-flash-lite groq:openai/gpt-oss-120b groq:openai/gpt-oss-20b groq:qwen/qwen3.8-27b' }}
         run: |
           # Each process gets its own time limit, so none is still writing when results are committed.
-          for m in gemini:gemini-3.1-flash-lite groq:openai/gpt-oss-120b groq:openai/gpt-oss-20b groq:qwen/qwen3.8-27b; do
+          for m in $MODELS; do
             timeout 320m python -m trasr.run --plan --models "$m" &
           done
           wait || true

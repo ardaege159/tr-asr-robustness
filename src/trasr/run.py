@@ -12,11 +12,24 @@ from __future__ import annotations
 
 import argparse
 import re
+import time
 from collections import Counter, defaultdict
 
 from .data import CONDITIONS, DATA, RESULTS, append_jsonl, conversations, read_jsonl, specs
 from .models import DailyQuota, run_assistant
 from .score import score
+
+# Gemini's daily quota resets at midnight Pacific (07:00 UTC). A run that finds it used up waits for
+# the reset instead of exiting, so a job started just before the reset doesn't sit idle for hours.
+GEMINI_RESET_UTC_HOUR = 7
+MAX_RESET_WAIT_S = 6 * 3600
+
+
+def seconds_to_gemini_reset() -> float:
+    now = time.time()
+    day = 24 * 3600
+    reset = (now // day) * day + GEMINI_RESET_UTC_HOUR * 3600 + 300
+    return reset - now if reset > now else reset + day - now
 
 RAW = RESULTS / "raw"
 
@@ -109,11 +122,18 @@ def main() -> None:
     if args.plan and args.ids is None:
         args.ids = subset_ids()
     for m in args.models or (MODELS if args.plan else []):
-        try:
-            for fix, conds in plan(m) if args.plan else [(args.fix, args.conditions)]:
-                run(m, conds, args.ids, fix)
-        except DailyQuota as e:
-            print(f"{m}: daily quota used up, rerun later to continue ({e})")
+        while True:
+            try:
+                for fix, conds in plan(m) if args.plan else [(args.fix, args.conditions)]:
+                    run(m, conds, args.ids, fix)
+                break
+            except DailyQuota as e:
+                wait = seconds_to_gemini_reset()
+                if not m.startswith("gemini:") or wait > MAX_RESET_WAIT_S:
+                    print(f"{m}: daily quota used up, rerun later to continue ({e})")
+                    break
+                print(f"{m}: daily quota used up, waiting {wait / 60:.0f} min for the reset", flush=True)
+                time.sleep(wait)
     if args.summary or not args.models:
         summary()
 
