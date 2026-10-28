@@ -6,7 +6,31 @@ Voice assistants don't read what the customer typed; they read a speech-to-text 
 order number, a card's last four, or a booking code is enough to cancel the wrong order or freeze the wrong card.
 This project measures how often that happens with current LLMs in Turkish, and tests a fix.
 
-> Results: see [`results/summary.md`](results/summary.md). Headline numbers are added here once the full run finishes.
+## Findings
+
+**Models act on what they heard.** Whisper delivered about 70% of numbers and codes intact. When one arrived
+corrupted, no model got the action right without a fix (0% correct for all four), and every model sometimes
+changed a record using a number the caller never said:
+
+| Model | Correct, ID intact | Correct, ID corrupted | Acted on the corrupted value | Asked instead |
+|---|---:|---:|---:|---:|
+| gpt-oss-20b | 68% | 0% | 71% | 17% |
+| qwen3.8-27b | 49% | 0% | 53% | 40% |
+| gemini-3.1-flash-lite | 78% | 0% | 33% | 58% |
+| gpt-oss-120b | 68% | 0% | 33% | 58% |
+
+*Speech conditions (`asr` + `selfcorr_asr`), no fix, 50-key subset; n = 58–84 rows per model.*
+
+- **Self-correction is not the problem.** No model ever used the value the caller took back, and accuracy with a
+  correction matched accuracy without one (e.g. gpt-oss-120b 80% clean, 86% with a correction). The damage comes
+  from the speech channel: accuracy drops 19–36 points from `clean` to `asr`.
+- **Reading values back helps, but only partly** (`gemini-3.1-flash-lite`). With `confirm`, accuracy on corrupted
+  IDs rose from 0% to 40%, at about 1.3 extra exchanges per call; in another 40% the model still acted on a wrong
+  value. *Preliminary: the confirm and prompt cells are still running.*
+- **Claimed actions without a call are rare** (0–2 of 50 per cell, by rule; the model judge missed both such
+  cases in the hand-labelled sample, so this check is a rule).
+
+Full tables, confidence intervals, latency and judge agreement: [`results/summary.md`](results/summary.md).
 
 ## What is measured
 
@@ -52,8 +76,8 @@ amounts accept `2.450,00`). Outcomes:
 
 What rules can't judge is graded by a separate model (`src/trasr/judge.py`) as yes/no questions: did the
 assistant *say* it did something it never called a tool for, did it follow the policy, did it repeat sensitive
-data, is the reply short enough to be spoken. I hand-labelled a random sample of 30 with the same questions; agreement
-with the judge is reported as percent agreement and Cohen's kappa. After labelling, Claude reviewed my labels and
+data, is the reply short enough to be spoken. I hand-labelled 40 replies with the same questions (30 random, plus 10 targeted at
+the rare failures); agreement with the judge is reported as percent agreement and Cohen's kappa. After labelling, Claude reviewed my labels and
 pointed out where I had graded the scripted assistant turns instead of the model's own output; I made the final
 call on each and changed 11 of 120 answers. The judge's prompt states the same rule.
 
